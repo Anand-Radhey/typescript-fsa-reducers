@@ -1,4 +1,10 @@
-import { Action, ActionCreator, AnyAction, isType } from "typescript-fsa";
+import {
+    Action,
+    ActionCreator,
+    AnyAction,
+    AsyncActionCreators,
+    isType,
+} from "typescript-fsa";
 
 export interface ReducerBuilder<InS extends OutS, OutS> {
     case<P>(
@@ -71,6 +77,10 @@ export interface ReducerBuilder<InS extends OutS, OutS> {
         actionCreators: Array<ActionCreator<P>>,
         handler: Handler<InS, OutS, Action<P>>,
     ): ReducerBuilder<InS, OutS>;
+    asyncCase<P, R, E>(
+        asyncActionCreators: AsyncActionCreators<P, R, E>,
+        handler: Handler<InS, OutS, AsyncAction<P, R, E>>,
+    ): ReducerBuilder<InS, OutS>;
 
     // Intentionally avoid AnyAction type so packages can export reducers
     // created using .build() without requiring a dependency on typescript-fsa.
@@ -82,6 +92,13 @@ export type Handler<InS extends OutS, OutS, P> = (
     state: InS,
     payload: P,
 ) => OutS;
+
+export interface AsyncAction<P, R, E> {
+    asyncState: "started" | "done" | "failed";
+    params: P;
+    result?: R;
+    error?: E;
+}
 
 export function reducerWithInitialState<S>(
     initialState: S,
@@ -149,6 +166,24 @@ function makeReducer<InS extends OutS, OutS>(
         reducer.casesWithAction(actionCreators, (state, action) =>
             handler(state, action.payload),
         );
+
+    reducer.asyncCase = <P, R, E>(
+        asyncActionCreator: AsyncActionCreators<P, R, E>,
+        handler: Handler<InS, OutS, AsyncAction<P, R, E>>,
+    ) =>
+        reducer
+            .case(asyncActionCreator.started, (state: InS, params: P) =>
+                handler(state, { asyncState: "started", params }),
+            )
+            .case(asyncActionCreator.done, (state: InS, { params, result }) =>
+                handler(state, { asyncState: "done", params, result }),
+            )
+            .caseWithAction(
+                asyncActionCreator.failed,
+                (state: InS, { payload: { params, error } }) =>
+                    handler(state, { asyncState: "failed", params, error }),
+            );
+
     reducer.build = () => getReducerFunction(initialState, cases.slice());
 
     return reducer;
